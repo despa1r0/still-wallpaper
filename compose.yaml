@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      WALLHAVEN_API_KEY: "${WALLHAVEN_API_KEY:-}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=384m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
