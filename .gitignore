@@ -9,3 +9,7 @@ frontend/*.tsbuildinfo
 test-results/
 playwright-report/
 tests/browser/node_modules/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
