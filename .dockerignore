@@ -28,3 +28,7 @@
 docs
 README.md
 requirements-dev.txt
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
