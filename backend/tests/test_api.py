@@ -128,10 +128,11 @@ def test_detail_and_no_nsfw_access(harness):
     'https://127.0.0.1/full/ab/wallhaven-abc123.jpg', 'https://w.wallhaven.cc.evil.test/full/ab/wallhaven-abc123.jpg',
     'https://w.wallhaven.cc/full/ab/wallhaven-abc123.jpg?redirect=localhost',
     'https://w.wallhaven.cc/full/ab/wallhaven-abcdef.jpg', 'https://w.wallhaven.cc@evil.test/full/ab/wallhaven-abc123.jpg'])
-def test_download_ssrf_rejected(harness, url):
+@pytest.mark.parametrize('route', ['download', 'image'])
+def test_download_ssrf_rejected(harness, url, route):
     client, state, calls = harness
     state['handler'] = lambda request: httpx.Response(200, json={'data': picture(path=url)})
-    assert client.get('/api/wallpapers/abc123/download').status_code == 502
+    assert client.get(f'/api/wallpapers/abc123/{route}').status_code == 502
     assert len(calls) == 1
 
 
@@ -153,16 +154,94 @@ def test_download_success_and_redirect_not_followed(harness):
     assert main.app.state.download_slots._value == 4
 
 
-def test_download_cap_for_chunked_response(harness, monkeypatch):
+@pytest.mark.parametrize('route', ['download', 'image'])
+@pytest.mark.parametrize('length', ['', '9'])
+def test_download_cap_for_chunked_response(harness, monkeypatch, route, length):
     client, state, _ = harness
     monkeypatch.setattr(main, 'MAX_DOWNLOAD', 4)
     def handler(request):
         if request.url.host == 'wallhaven.cc':
             return httpx.Response(200, json={'data': picture()})
-        return httpx.Response(200, content=b'too large', headers={'content-type': 'image/png', 'content-length': ''})
+        return httpx.Response(200, content=b'too large', headers={'content-type': 'image/png', 'content-length': length})
     state['handler'] = handler
-    assert client.get('/api/wallpapers/abc123/download').status_code == 413
+    assert client.get(f'/api/wallpapers/abc123/{route}').status_code == 413
     assert main.app.state.download_slots._value == 4
+
+
+@pytest.mark.parametrize('content_type', ['image/jpeg', 'image/png', 'image/webp'])
+def test_preview_image_is_inline_cacheable_and_releases_spool(harness, monkeypatch, content_type):
+    client, state, calls = harness
+    spools = []
+    def create_spool(**kwargs):
+        spool = SpooledTemporaryFile(**kwargs)
+        spools.append(spool)
+        return spool
+    monkeypatch.setattr(main, 'SpooledTemporaryFile', create_spool)
+    def handler(request):
+        if request.url.host == 'wallhaven.cc':
+            return httpx.Response(200, json={'data': picture()})
+        assert request.headers['accept'] == 'image/jpeg,image/png,image/webp'
+        return httpx.Response(200, content=b'image bytes', headers={'content-type': content_type})
+    state['handler'] = handler
+    response = client.get('/api/wallpapers/abc123/image')
+    assert response.status_code == 200
+    assert response.content == b'image bytes'
+    assert response.headers['content-type'] == content_type
+    assert response.headers['content-disposition'] == 'inline; filename="wallhaven-abc123.jpg"'
+    assert response.headers['cache-control'] == 'public, max-age=3600'
+    assert response.headers['x-content-type-options'] == 'nosniff'
+    assert response.headers['content-length'] == str(len(response.content))
+    assert len(calls) == 2
+    assert len(spools) == 1 and spools[0].closed
+    assert main.app.state.download_slots._value == 4
+
+
+@pytest.mark.parametrize('code,expected', [(302, 502), (404, 404), (429, 429), (500, 502)])
+def test_preview_upstream_failure_not_cached_and_releases_resources(harness, monkeypatch, code, expected):
+    client, state, calls = harness
+    spools = []
+    def create_spool(**kwargs):
+        spool = SpooledTemporaryFile(**kwargs)
+        spools.append(spool)
+        return spool
+    monkeypatch.setattr(main, 'SpooledTemporaryFile', create_spool)
+    def handler(request):
+        if request.url.host == 'wallhaven.cc':
+            return httpx.Response(200, json={'data': picture()})
+        return httpx.Response(code, text='sensitive upstream body',
+                              headers={'location': 'http://127.0.0.1/private', 'retry-after': '12'})
+    state['handler'] = handler
+    response = client.get('/api/wallpapers/abc123/image')
+    assert response.status_code == expected
+    assert 'sensitive' not in response.text
+    assert 'cache-control' not in response.headers
+    assert len(calls) == 2
+    if code == 429:
+        assert response.headers['retry-after'] == '12'
+    assert spools[0].closed
+    assert main.app.state.download_slots._value == 4
+    assert main.app.state.request_slots._value == 8
+
+
+@pytest.mark.parametrize('failure', ['timeout', 'network', 'html', 'svg'])
+def test_preview_rejects_bad_images_and_sanitizes_network_errors(harness, failure):
+    client, state, _ = harness
+    def handler(request):
+        if request.url.host == 'wallhaven.cc':
+            return httpx.Response(200, json={'data': picture()})
+        if failure == 'timeout':
+            raise httpx.ReadTimeout('sensitive upstream URL')
+        if failure == 'network':
+            raise httpx.ConnectError('sensitive upstream URL')
+        return httpx.Response(200, content=b'sensitive content',
+                              headers={'content-type': 'text/html' if failure == 'html' else 'image/svg+xml'})
+    state['handler'] = handler
+    response = client.get('/api/wallpapers/abc123/image')
+    assert response.status_code == (504 if failure == 'timeout' else 502)
+    assert 'sensitive' not in response.text
+    assert 'cache-control' not in response.headers
+    assert main.app.state.download_slots._value == 4
+    assert main.app.state.request_slots._value == 8
 
 
 def test_download_slot_and_spool_closed_on_client_disconnect():

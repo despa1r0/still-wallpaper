@@ -13,3 +13,6 @@ tests/browser/node_modules/
 *.tfstate
 *.tfstate.*
 *.tfvars
+
+# Local browser preview screenshots
+/previews/

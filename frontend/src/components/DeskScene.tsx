@@ -231,7 +231,7 @@ export default function DeskScene({
         <rect x="528" y="263" width="457" height="258" fill="#0d1018" />
         <image
           className="monitor-wallpaper"
-          href={image}
+          href={image || undefined}
           x="528"
           y="263"
           width="457"
@@ -269,7 +269,7 @@ export default function DeskScene({
         <rect x="224" y="343" width="280" height="180" fill="#0d1018" />
         <image
           className="laptop-wallpaper"
-          href={image}
+          href={image || undefined}
           x="224"
           y="343"
           width="280"

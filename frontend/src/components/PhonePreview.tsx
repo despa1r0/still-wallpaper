@@ -15,9 +15,12 @@ import {
   Image,
   Compass,
 } from "lucide-react";
+import { useWallpaperPreview } from "../hooks/useWallpaperPreview";
+import PreviewNotice from "./PreviewNotice";
 import { readStorage, writeStorage } from "../api";
 import type { Wallpaper } from "../types";
 interface PhoneSettings {
+  wallpaperId: string;
   mode: "lock" | "home";
   dark: boolean;
   x: number;
@@ -36,22 +39,35 @@ export default function PhonePreview({
 }) {
   const initial = () => {
     const s = readStorage<Partial<PhoneSettings>>("still-phone", {});
+    const sameWallpaper = s?.wallpaperId === wallpaper.id;
     return {
+      wallpaperId: wallpaper.id,
       fit: s?.fit === "cover" ? "cover" : "contain",
       mode: s?.mode === "home" ? "home" : "lock",
       dark: s?.dark === true,
-      x: typeof s?.x === "number" ? Math.min(100, Math.max(0, s.x)) : 50,
-      y: typeof s?.y === "number" ? Math.min(100, Math.max(0, s.y)) : 50,
+      x:
+        sameWallpaper && typeof s?.x === "number"
+          ? Math.min(100, Math.max(0, s.x))
+          : 50,
+      y:
+        sameWallpaper && typeof s?.y === "number"
+          ? Math.min(100, Math.max(0, s.y))
+          : 50,
       zoom:
-        s?.fit && typeof s?.zoom === "number" ? Math.min(2, Math.max(0.5, s.zoom)) : 1,
+        sameWallpaper && s?.fit && typeof s?.zoom === "number"
+          ? Math.min(2, Math.max(0.5, s.zoom))
+          : 1,
     } as PhoneSettings;
   };
   const [settings, setSettings] = useState(initial);
+  const preview = useWallpaperPreview(wallpaper);
   const [drag, setDrag] = useState<{
     x: number;
     y: number;
     px: number;
     py: number;
+    spaceX: number;
+    spaceY: number;
   } | null>(null);
   function update(patch: Partial<PhoneSettings>) {
     setSettings((s) => {
@@ -70,18 +86,41 @@ export default function PhonePreview({
             className="phone-screen"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId);
-              setDrag({ x: e.clientX, y: e.clientY, px: s.x, py: s.y });
+              const { width, height } = e.currentTarget.getBoundingClientRect();
+              const ratio = wallpaper.dimension_x / wallpaper.dimension_y;
+              const fittedWidth =
+                s.fit === "contain"
+                  ? Math.min(width, height * ratio)
+                  : Math.max(width, height * ratio);
+              setDrag({
+                x: e.clientX,
+                y: e.clientY,
+                px: s.x,
+                py: s.y,
+                spaceX: width - fittedWidth * s.zoom,
+                spaceY: height - (fittedWidth / ratio) * s.zoom,
+              });
             }}
             onPointerMove={(e) => {
               if (drag)
                 update({
                   x: Math.max(
                     0,
-                    Math.min(100, drag.px - (e.clientX - drag.x) / 2),
+                    Math.min(
+                      100,
+                      Math.abs(drag.spaceX) > 1
+                        ? drag.px + ((e.clientX - drag.x) / drag.spaceX) * 100
+                        : drag.px,
+                    ),
                   ),
                   y: Math.max(
                     0,
-                    Math.min(100, drag.py - (e.clientY - drag.y) / 2),
+                    Math.min(
+                      100,
+                      Math.abs(drag.spaceY) > 1
+                        ? drag.py + ((e.clientY - drag.y) / drag.spaceY) * 100
+                        : drag.py,
+                    ),
                   ),
                 });
             }}
@@ -95,13 +134,16 @@ export default function PhonePreview({
               } as CSSProperties
             }
           >
-            <img
-              src={wallpaper.path}
-              alt="Selected wallpaper on the phone"
-              className="phone-wallpaper"
-              draggable={false}
-              style={{ objectFit: s.fit }}
-            />
+            {preview.src && (
+              <img
+                referrerPolicy="no-referrer"
+                src={preview.src}
+                alt="Selected wallpaper on the phone"
+                className="phone-wallpaper"
+                draggable={false}
+                style={{ objectFit: s.fit }}
+              />
+            )}
             <div className="phone-shade" />
             <div className="phone-island" />
             <div className="phone-status">
@@ -181,6 +223,11 @@ export default function PhonePreview({
             <div className="home-indicator" />
           </div>
         </div>
+        <PreviewNotice
+          status={preview.status}
+          hasImage={!!preview.src}
+          retry={preview.retry}
+        />
         <span className="phone-caption">
           Drag the wallpaper to adjust its position
         </span>

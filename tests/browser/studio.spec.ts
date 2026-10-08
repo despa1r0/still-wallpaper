@@ -1,3 +1,4 @@
+import { previewPath } from "./preview-path";
 import { test, expect, type Page } from '@playwright/test';
 
 const ids = ['aaaaaa', 'bbbbbb', 'cccccc', 'dddddd', 'eeeeee', 'ffffff'];
@@ -28,7 +29,15 @@ async function mockApi(page: Page, mode: 'ok' | 'empty' | 'error' = 'ok') {
   });
   await page.route('**/api/wallpapers**', async route => {
     const url = new URL(route.request().url());
-    if (url.pathname.endsWith('/download')) {
+    if (url.pathname.endsWith('/image')) {
+      const id = url.pathname.split('/').at(-2);
+      if (id === 'cccccc') {
+        await route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"><rect width="1080" height="1920" fill="#263e64"/><rect x="20" y="20" width="1040" height="1880" fill="none" stroke="#c4d9ff" stroke-width="40"/><circle cx="540" cy="960" r="260" fill="#7fa7e8"/></svg>' });
+      } else {
+        const image = await page.request.get('/art/quiet-valley.svg');
+        await route.fulfill({ contentType: 'image/svg+xml', body: await image.body() });
+      }
+    } else if (url.pathname.endsWith('/download')) {
       await route.fulfill({ status: 200, contentType: 'image/jpeg', body: Buffer.from([255, 216, 255, 217]) });
     } else if (/\/wallpapers\/\w+$/.test(url.pathname)) {
       const found = wallpapers.find(w => url.pathname.endsWith(w.id));
@@ -105,7 +114,7 @@ test('gallery details retain selection across desk and phone navigation', async 
   await page.getByRole('button', { name: 'Open wallpaper cccccc' }).click();
   await dialog.getByRole('button', { name: 'Preview on phone', exact: true }).click();
   await expect(page).toHaveURL(/\/phone\?wallpaper=cccccc/);
-  await expect(page.getByAltText('Selected wallpaper on the phone')).toHaveAttribute('src', wallpapers[2].path);
+  await expect(page.getByAltText('Selected wallpaper on the phone')).toHaveAttribute('src', '/api/wallpapers/cccccc/image');
   await page.getByRole('button', { name: 'Home screen', exact: true }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await page.getByLabel('Zoom').fill('1.5');
@@ -148,10 +157,10 @@ test('desktop and mobile layouts fit viewport and provide usable lighting dialog
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Preview wallpaper aaaaaa' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Cool', exact: true })).not.toBeVisible();
-  await page.screenshot({ path: '../../docs/preview-desktop.png', fullPage: true });
+  await page.screenshot({ path: previewPath("preview-desktop.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: '../../docs/preview-mobile.png', fullPage: true });
+  await page.screenshot({ path: previewPath("preview-mobile.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: 'Lighting' }).click();
   const dialog = page.getByRole('dialog', { name: 'Light your space' });
@@ -169,14 +178,14 @@ test('portrait wallpapers preserve their full frame on both screens and phone un
   const monitor = page.locator('.desk-scene .monitor-wallpaper');
   const laptop = page.locator('.desk-scene .laptop-wallpaper');
   for (const screen of [monitor, laptop]) {
-    await expect(screen).toHaveAttribute('href', wallpapers[2].path);
+    await expect(screen).toHaveAttribute('href', '/api/wallpapers/cccccc/image');
     await expect(screen).toHaveAttribute('preserveAspectRatio', 'xMidYMid meet');
   }
-  await page.screenshot({ path: '../../docs/preview-framing.png', fullPage: true });
+  await page.screenshot({ path: previewPath("preview-framing.png"), fullPage: true });
   await page.getByRole('button', { name: 'View wallpaper', exact: true }).click();
   const originalPreview = page.getByRole('dialog', { name: 'Wallpaper preview', exact: true });
-  await expect(originalPreview.getByRole('img')).toHaveAttribute('src', wallpapers[2].path);
-  await expect(originalPreview.getByRole('img')).toHaveCSS('object-fit', 'contain');
+  await expect(originalPreview.getByRole('img', { name: 'Wallpaper cccccc, 1080x1920', exact: true })).toHaveAttribute('src', '/api/wallpapers/cccccc/image');
+  await expect(originalPreview.getByRole('img', { name: 'Wallpaper cccccc, 1080x1920', exact: true })).toHaveCSS('object-fit', 'contain');
   await page.keyboard.press('Escape');
   await expect(originalPreview).not.toBeVisible();
   await page.getByRole('button', { name: 'Fill screen', exact: true }).click();
@@ -189,7 +198,7 @@ test('portrait wallpapers preserve their full frame on both screens and phone un
   }
   await page.getByRole('button', { name: 'Phone preview', exact: true }).click();
   const phone = page.getByAltText('Selected wallpaper on the phone');
-  await expect(phone).toHaveAttribute('src', wallpapers[2].path);
+  await expect(phone).toHaveAttribute('src', '/api/wallpapers/cccccc/image');
   await expect(phone).toHaveCSS('object-fit', 'contain');
   await expect.poll(() => phone.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([1080, 1920]);
   await page.getByRole('button', { name: 'Fill screen', exact: true }).click();

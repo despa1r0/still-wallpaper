@@ -240,8 +240,8 @@ class SpoolDownloadResponse(StreamingResponse):
             self.slots.release()
 
 
-@app.get('/api/wallpapers/{wallpaper_id}/download')
-async def download(wallpaper_id: str):
+async def wallpaper_image_response(wallpaper_id: str, *, attachment: bool):
+    """Fetch only an original returned by Wallhaven, with bounded memory and disk use."""
     item = await detail(wallpaper_id)
     image_url = item.get('path', '')
     parsed = urlsplit(image_url)
@@ -255,7 +255,9 @@ async def download(wallpaper_id: str):
     try:
         spool = SpooledTemporaryFile(max_size=1024 * 1024)
         async with app.state.request_slots:
-            async with app.state.client.stream('GET', image_url) as response:
+            async with app.state.client.stream('GET', image_url,
+                                               headers={'Accept': 'image/jpeg,image/png,image/webp'},
+                                               follow_redirects=False) as response:
                 upstream_error(response)
                 content_type = response.headers.get('content-type', '').split(';')[0]
                 if content_type not in ('image/jpeg', 'image/png', 'image/webp'):
@@ -274,12 +276,28 @@ async def download(wallpaper_id: str):
         if spool is not None:
             spool.close()
         slots.release()
+        if not attachment and isinstance(exc, httpx.TimeoutException):
+            raise HTTPException(504, 'Wallpaper preview took too long to load') from None
         if isinstance(exc, httpx.HTTPError):
-            raise HTTPException(502, 'Image download failed. Please try again.') from None
+            message = 'Image download failed. Please try again.' if attachment else 'Could not load the wallpaper preview'
+            raise HTTPException(502, message) from None
         raise
-    return SpoolDownloadResponse(spool, slots, media_type=content_type,
-                             headers={'Content-Disposition': f'attachment; filename="{Path(parsed.path).name}"',
-                                      'Content-Length': str(size)})
+    disposition = 'attachment' if attachment else 'inline'
+    headers = {'Content-Disposition': f'{disposition}; filename="{Path(parsed.path).name}"',
+               'Content-Length': str(size)}
+    if not attachment:
+        headers.update({'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff'})
+    return SpoolDownloadResponse(spool, slots, media_type=content_type, headers=headers)
+
+
+@app.get('/api/wallpapers/{wallpaper_id}/download')
+async def download(wallpaper_id: str):
+    return await wallpaper_image_response(wallpaper_id, attachment=True)
+
+
+@app.get('/api/wallpapers/{wallpaper_id}/image')
+async def preview_image(wallpaper_id: str):
+    return await wallpaper_image_response(wallpaper_id, attachment=False)
 
 
 @app.get('/{file_path:path}', include_in_schema=False)

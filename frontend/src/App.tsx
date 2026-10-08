@@ -16,7 +16,6 @@ import {
   Download,
   Expand,
   Heart,
-  ImageOff,
   LayoutGrid,
   Lightbulb,
   LoaderCircle,
@@ -45,6 +44,9 @@ import {
   type Lighting,
   type Wallpaper,
 } from "./types";
+import WallpaperImage from "./components/WallpaperImage";
+import PreviewNotice from "./components/PreviewNotice";
+import { useWallpaperPreview } from "./hooks/useWallpaperPreview";
 import DeskScene from "./components/DeskScene";
 import FilterPanel from "./components/Filters";
 import PhonePreview from "./components/PhonePreview";
@@ -77,29 +79,6 @@ function initialLighting(): Lighting {
     garland: typeof saved?.garland === "boolean" ? saved.garland : true,
   };
 }
-function WallpaperImage({
-  wallpaper,
-  full = false,
-}: {
-  wallpaper: Wallpaper;
-  full?: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [wallpaper.id]);
-  return failed ? (
-    <div className="image-unavailable">
-      <ImageOff size={24} />
-      <span>Image unavailable</span>
-    </div>
-  ) : (
-    <img
-      src={full ? wallpaper.path : wallpaper.thumbs.large}
-      alt={`Wallpaper ${wallpaper.id}, ${wallpaper.resolution}`}
-      loading={full ? "eager" : "lazy"}
-      onError={() => setFailed(true)}
-    />
-  );
-}
 function App() {
   const location = useLocation(),
     navigate = useNavigate();
@@ -128,10 +107,6 @@ function App() {
     const saved = readStorage<unknown>("still-wallpaper", null);
     return validWallpaper(saved) ? saved : starter;
   });
-  const [displayedImage, setDisplayedImage] = useState(starter.path);
-  const [previewStatus, setPreviewStatus] = useState<
-    "ready" | "loading" | "error"
-  >("ready");
   const [favorites, setFavorites] = useState<Wallpaper[]>(() => {
     const value = readStorage<unknown>("still-favorites", []);
     return Array.isArray(value) ? value.filter(validWallpaper) : [];
@@ -173,6 +148,7 @@ function App() {
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [lightOpen, compact]);
+  const preview = useWallpaperPreview(selected, mode === "desk" || expanded);
   const galleryScroll = useRef(0);
   const loadMarker = useRef<HTMLDivElement>(null);
   const touch = useRef<number | null>(null);
@@ -221,24 +197,6 @@ function App() {
     if (selected.id !== "local") writeStorage("still-wallpaper", selected);
   }, [selected]);
   useEffect(() => {
-    let active = true;
-    const image = new Image();
-    setPreviewStatus("loading");
-    image.onload = () => {
-      if (active) {
-        setDisplayedImage(selected.path);
-        setPreviewStatus("ready");
-      }
-    };
-    image.onerror = () => {
-      if (active) setPreviewStatus("error");
-    };
-    image.src = selected.path;
-    return () => {
-      active = false;
-    };
-  }, [selected.path]);
-  useEffect(() => {
     document.title =
       {
         desk: "My desk",
@@ -263,7 +221,8 @@ function App() {
     const next = wallpapers[index + 1];
     if (next) {
       const img = new Image();
-      img.src = next.path;
+      img.referrerPolicy = "no-referrer";
+      img.src = next.thumbs.original;
     }
   }, [selected.id, wallpapers]);
   useEffect(() => {
@@ -647,24 +606,17 @@ function App() {
                   }}
                 >
                   <DeskScene
-                    image={displayedImage}
+                    image={preview.src || ""}
                     lighting={lighting}
                     fit={previewFit}
                   />
                 </div>
-                <div className="preview-status" role="status">
-                  {previewStatus === "loading" && (
-                    <>
-                      <LoaderCircle size={13} className="spin" /> Loading
-                      preview…
-                    </>
-                  )}
-                  {previewStatus === "error" && (
-                    <>
-                      <ImageOff size={13} /> Preview unavailable · showing your
-                      previous wallpaper
-                    </>
-                  )}
+                <div className="preview-status">
+                  <PreviewNotice
+                    status={preview.status}
+                    hasImage={!!preview.src}
+                    retry={preview.retry}
+                  />
                 </div>
                 {lightOpen && !compact && (
                   <aside
@@ -1099,6 +1051,7 @@ function App() {
               </button>
             </section>
             <PhonePreview
+              key={selected.id}
               wallpaper={selected}
               onDownload={() => void download()}
               downloading={downloading}
@@ -1166,7 +1119,7 @@ function App() {
       {expanded && (
         <Dialog title="Your space" onClose={() => setExpanded(false)} wide>
           <DeskScene
-            image={displayedImage}
+            image={preview.src || ""}
             lighting={lighting}
             fit={previewFit}
           />
